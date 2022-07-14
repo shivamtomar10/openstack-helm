@@ -94,6 +94,8 @@ deployment:
 network:
   host_namespace: true
 EOF
+
+
 touch /tmp/ingress-component.yaml
 
 if [ -n "${OSH_DEPLOY_MULTINODE}" ]; then
