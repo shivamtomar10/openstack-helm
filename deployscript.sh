@@ -31,11 +31,11 @@ chmod 700 get_helm.sh
 cd /opt/openstack-helm
 ./tools/deployment/developer/common/010-deploy-k8s.sh
 
-namespaceStatus2=$(kubectl get nodes node-role.kubernetes.io/control-plane- node-role.kubernetes.io/master- -o json | jq .status.phase -r)
-while [ $namespaceStatus2 != "Ready" ]
-do
-  ./tools/deployment/developer/common/010-deploy-k8s.sh
-done
+#namespaceStatus2=$(kubectl get nodes node-role.kubernetes.io/control-plane- node-role.kubernetes.io/master- -o json | jq .status.phase -r)
+#while [ $namespaceStatus2 != "Ready" ]
+#do
+#  ./tools/deployment/developer/common/010-deploy-k8s.sh
+#done
 
 sudo -H -E pip3 install --upgrade pip
 sudo -H -E pip3 install \
