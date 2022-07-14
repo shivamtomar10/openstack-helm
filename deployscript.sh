@@ -8,12 +8,30 @@ cd /opt/
 git clone https://opendev.org/openstack/openstack-helm-infra.git
 git clone https://opendev.org/openstack/openstack-helm.git
 
-#Deploy Kubernetes and Helm
+#Install docker 
+yes | sudo apt install docker.io
 
+#Install kubeadm 
+sudo apt-get update
+yes | sudo apt-get install -y apt-transport-https ca-certificates curl
+
+sudo curl -fsSLo /usr/share/keyrings/kubernetes-archive-keyring.gpg https://packages.cloud.google.com/apt/doc/apt-key.gpg
+echo "deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee /etc/apt/sources.list.d/kubernetes.list
+
+sudo apt-get update
+sudo apt-get install -y kubelet kubeadm kubectl
+sudo apt-mark hold kubelet kubeadm kubectl
+
+#Install helm
+curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+chmod 700 get_helm.sh
+./get_helm.sh
+
+#Deploy Kubernetes and Helm
 cd /opt/openstack-helm
 ./tools/deployment/developer/common/010-deploy-k8s.sh
 
-namespaceStatus2=$(kubectl get nodes -o json | jq .status.phase -r)
+namespaceStatus2=$(kubectl get nodes node-role.kubernetes.io/control-plane- node-role.kubernetes.io/master- -o json | jq .status.phase -r)
 while [ $namespaceStatus2 != "Ready" ]
 do
   ./tools/deployment/developer/common/010-deploy-k8s.sh
