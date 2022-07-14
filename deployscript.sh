@@ -490,7 +490,7 @@ helm upgrade --install libvirt ${HELM_CHART_ROOT_PATH}/libvirt \
 
 my_br_ip=$(ifconfig eth0 | egrep -o 'inet [0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}'  | cut -d' ' -f2)
 
-echo use ssh -L 32020:$my_br_ip:31000 ubuntu@$my_br_ip for ip forwarding
+echo use ssh -L 32020:$my_br_ip:31000 ubuntu@$my_br_ip for port forwarding
 
 
 
