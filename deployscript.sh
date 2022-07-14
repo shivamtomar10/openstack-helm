@@ -1,7 +1,7 @@
 
 
 #Install Basic Utilities
-sudo apt install git curl make
+yes | sudo apt install git curl make
 
 #Install the openstack-helm repos
 cd /opt/
