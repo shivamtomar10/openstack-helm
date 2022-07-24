@@ -1,17 +1,11 @@
-
-
-#Install Basic Utilities
-yes | sudo apt install git curl make
-
-#Install the openstack-helm repos
-cd /opt/
-git clone https://opendev.org/openstack/openstack-helm-infra.git
-git clone https://opendev.org/openstack/openstack-helm.git
+#update and upgrading
+sudo apt-get -y update
+sudo apt-get -y upgrade
 
 #Install docker 
 yes | sudo apt install docker.io
 
-#Install kubeadm 
+#Install kubeadm for k8s cluster
 sudo apt-get update
 yes | sudo apt-get install -y apt-transport-https ca-certificates curl
 
@@ -26,6 +20,15 @@ sudo apt-mark hold kubelet kubeadm kubectl
 curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
 chmod 700 get_helm.sh
 ./get_helm.sh
+
+#Install Basic Utilities
+yes | sudo apt install git curl make
+
+#Install the openstack-helm repos
+cd /opt/
+git clone https://opendev.org/openstack/openstack-helm-infra.git
+git clone https://opendev.org/openstack/openstack-helm.git
+
 
 #Deploy Kubernetes and Helm
 cd /opt/openstack-helm
