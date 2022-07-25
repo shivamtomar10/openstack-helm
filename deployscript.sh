@@ -1,4 +1,4 @@
-sudo su
+
 #update and upgrading
 sudo apt-get update
 sudo apt-get -y upgrade
