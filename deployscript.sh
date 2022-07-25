@@ -82,4 +82,4 @@ git clone https://opendev.org/openstack/openstack-helm.git
 ./tools/deployment/developer/ceph/170-setup-gateway.sh
 
 echo "Successfully deployed😀"
-echo "login admin as username and password for password"
+echo "login admin as username and password as password"
