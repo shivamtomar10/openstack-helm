@@ -30,6 +30,8 @@ cd /opt/
 git clone https://opendev.org/openstack/openstack-helm-infra.git
 git clone https://opendev.org/openstack/openstack-helm.git
 
+cd /opt/openstack-helm
+
 #Deploy Kubernetes and helm 
 ./tools/deployment/developer/common/010-deploy-k8s.sh
 
