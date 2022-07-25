@@ -1,3 +1,4 @@
+sudo su
 #update and upgrading
 sudo apt-get update
 sudo apt-get -y upgrade
@@ -22,7 +23,7 @@ chmod 700 get_helm.sh
 ./get_helm.sh
 
 #Install Basic Utilities
-sudo apt install git curl make
+yes | sudo apt install git curl make
 
 #Clone the openstack-helm repos
 cd /opt/
