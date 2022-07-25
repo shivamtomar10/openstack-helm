@@ -1,5 +1,5 @@
 #update and upgrading
-sudo apt-get -y update
+sudo apt-get update
 sudo apt-get -y upgrade
 
 #Install docker 
@@ -22,502 +22,64 @@ chmod 700 get_helm.sh
 ./get_helm.sh
 
 #Install Basic Utilities
-yes | sudo apt install git curl make
+sudo apt install git curl make
 
-#Install the openstack-helm repos
+#Clone the openstack-helm repos
 cd /opt/
 git clone https://opendev.org/openstack/openstack-helm-infra.git
 git clone https://opendev.org/openstack/openstack-helm.git
 
-
-#Deploy Kubernetes and Helm
-cd /opt/openstack-helm
+#Deploy Kubernetes and helm 
 ./tools/deployment/developer/common/010-deploy-k8s.sh
 
-#namespaceStatus2=$(kubectl get nodes node-role.kubernetes.io/control-plane- node-role.kubernetes.io/master- -o json | jq .status.phase -r)
-#while [ $namespaceStatus2 != "Ready" ]
-#do
-#  ./tools/deployment/developer/common/010-deploy-k8s.sh
-#done
+#setup client on the host and assemble the charts
+./tools/deployment/developer/common/020-setup-client.sh
 
-sudo -H -E pip3 install --upgrade pip
-sudo -H -E pip3 install \
-  -c${UPPER_CONSTRAINTS_FILE:=https://releases.openstack.org/constraints/upper/${OPENSTACK_RELEASE:-xena}} \
-  cmd2 python-openstackclient python-heatclient --ignore-installed
+#Deploy the ingress Controller
+./tools/deployment/component/common/ingress.sh
 
-export HELM_CHART_ROOT_PATH=/opt/openstack-helm-infra/
-export OSH_INFRA_ROOT_PATH=/opt/openstack-helm-infra/
-
-sudo -H mkdir -p /etc/openstack
-sudo -H chown -R $(id -un): /etc/openstack
-FEATURE_GATE="tls"; if [[ ${FEATURE_GATES//,/ } =~ (^|[[:space:]])${FEATURE_GATE}($|[[:space:]]) ]]; then
-  tee /etc/openstack/clouds.yaml << EOF
-  clouds:
-    openstack_helm:
-      region_name: RegionOne
-      identity_api_version: 3
-      cacert: /etc/openstack-helm/certs/ca/ca.pem
-      auth:
-        username: 'admin'
-        password: 'password'
-        project_name: 'admin'
-        project_domain_name: 'default'
-        user_domain_name: 'default'
-        auth_url: 'https://keystone.openstack.svc.cluster.local/v3'
-EOF
-else
-  tee /etc/openstack/clouds.yaml << EOF
-  clouds:
-    openstack_helm:
-      region_name: RegionOne
-      identity_api_version: 3
-      auth:
-        username: 'admin'
-        password: 'password'
-        project_name: 'admin'
-        project_domain_name: 'default'
-        user_domain_name: 'default'
-        auth_url: 'http://keystone.openstack.svc.cluster.local/v3'
-EOF
-fi
+#Deploy Ceph
+./tools/deployment/developer/ceph/040-ceph.sh
 
 
-#Build Helm-toolkit,most charts depend on it
-make -C ${HELM_CHART_ROOT_PATH} helm-toolkit
+#Activate the openstack namespace to be able to use Ceph 
+./tools/deployment/developer/ceph/045-ceph-ns-activate.sh
 
+#Deploy Mariadb
+./tools/deployment/developer/ceph/050-mariadb.sh
 
-#Deploy the ingress controller
-make -C ${HELM_CHART_ROOT_PATH} ingress
+#Deploy RabbitMQ
+./tools/deployment/developer/ceph/060-rabbitmq.sh
 
-: ${OSH_EXTRA_HELM_ARGS:=""}
-tee /tmp/ingress-kube-system.yaml << EOF
-deployment:
-  mode: cluster
-  type: DaemonSet
-network:
-  host_namespace: true
-EOF
-
-
-touch /tmp/ingress-component.yaml
-
-if [ -n "${OSH_DEPLOY_MULTINODE}" ]; then
-  tee --append /tmp/ingress-kube-system.yaml << EOF
-pod:
-  replicas:
-    error_page: 2
-EOF
-
-  tee /tmp/ingress-component.yaml << EOF
-pod:
-  replicas:
-    ingress: 2
-    error_page: 2
-EOF
-fi
-
-
-namespaceStatus=$(kubectl get ns openstack -o json | jq .status.phase -r)
-if [ $namespaceStatus != "Active" ]
-then
-   sudo kubectl create ns openstack
-
-namespaceStatus1=$(kubectl get ns ceph -o json | jq .status.phase -r)
-if [ $namespaceStatus1 != "Active" ]
-then
-   sudo kubectl create ns ceph
-   
-helm upgrade --install ingress-kube-system ${HELM_CHART_ROOT_PATH}/ingress \
-  --namespace=kube-system \
-  --values=/tmp/ingress-kube-system.yaml \
-  ${OSH_EXTRA_HELM_ARGS} \
-  ${OSH_EXTRA_HELM_ARGS_INGRESS} \
-  ${OSH_EXTRA_HELM_ARGS_INGRESS_KUBE_SYSTEM}
-  
-helm upgrade --install ingress-openstack ${HELM_CHART_ROOT_PATH}/ingress \
-  --namespace=openstack \
-  --values=/tmp/ingress-component.yaml \
-  ${OSH_EXTRA_HELM_ARGS} \
-  ${OSH_EXTRA_HELM_ARGS_INGRESS} \
-  ${OSH_EXTRA_HELM_ARGS_INGRESS_OPENSTACK}
-
-helm upgrade --install ingress-ceph ${HELM_CHART_ROOT_PATH}/ingress \
-  --namespace=ceph \
-  --values=/tmp/ingress-component.yaml \
-  ${OSH_EXTRA_HELM_ARGS} \
-  ${OSH_EXTRA_HELM_ARGS_INGRESS} \
-  ${OSH_EXTRA_HELM_ARGS_INGRESS_CEPH}
-
-#Deploy ceph
-export CEPH_ENABLED=true
-
-if [ "${CREATE_LOOPBACK_DEVICES_FOR_CEPH:=true}" == "true" ]; then
-  ./tools/deployment/common/setup-ceph-loopback-device.sh --ceph-osd-data ${CEPH_OSD_DATA_DEVICE:=/dev/loop20} \
-  --ceph-osd-dbwal ${CEPH_OSD_DB_WAL_DEVICE:=/dev/loop21}
-fi
-
-export HELM_CHART_ROOT_PATH="${HELM_CHART_ROOT_PATH:="${OSH_INFRA_PATH:="../openstack-helm-infra"}"}"
-for CHART in ceph-mon ceph-osd ceph-client ceph-provisioners; do
-  make -C ${HELM_CHART_ROOT_PATH} "${CHART}"
-done
-
-[ -s /tmp/ceph-fs-uuid.txt ] || uuidgen > /tmp/ceph-fs-uuid.txt
-CEPH_FS_ID="$(cat /tmp/ceph-fs-uuid.txt)"
-
-. /etc/os-release
-if [ "x${ID}" == "xcentos" ] || \
-   ([ "x${ID}" == "xubuntu" ] && \
-   dpkg --compare-versions "$(uname -r)" "lt" "4.5"); then
-  CRUSH_TUNABLES=hammer
-else
-  CRUSH_TUNABLES=null
-fi
-tee /tmp/ceph.yaml <<EOF
-endpoints:
-  ceph_mon:
-    namespace: ceph
-  ceph_mgr:
-    namespace: ceph
-network:
-  public: 172.17.0.1/16
-  cluster: 172.17.0.1/16
-deployment:
-  storage_secrets: true
-  ceph: true
-  rbd_provisioner: true
-  csi_rbd_provisioner: true
-  cephfs_provisioner: true
-  client_secrets: false
-manifests:
-  deployment_rbd_provisioner: true
-  deployment_csi_rbd_provisioner: true
-  deployment_cephfs_provisioner: true
-bootstrap:
-  enabled: true
-conf:
-  ceph:
-    global:
-      fsid: ${CEPH_FS_ID}
-      mon_addr: :6789
-      osd_pool_default_size: 1
-    osd:
-      osd_crush_chooseleaf_type: 0
-  pool:
-    crush:
-      tunables: ${CRUSH_TUNABLES}
-    target:
-      osd: 1
-      pg_per_osd: 100
-    default:
-      crush_rule: same_host
-    spec:
-      # Health metrics pool
-      - name: device_health_metrics
-        application: mgr_devicehealth
-        replication: 1
-        percent_total_data: 5
-      # RBD pool
-      - name: rbd
-        application: rbd
-        replication: 1
-        percent_total_data: 40
-      # CephFS pools
-      - name: cephfs_metadata
-        application: cephfs
-        replication: 1
-        percent_total_data: 5
-      - name: cephfs_data
-        application: cephfs
-        replication: 1
-        percent_total_data: 10
-      # RadosGW pools
-      - name: .rgw.root
-        application: rgw
-        replication: 1
-        percent_total_data: 0.1
-      - name: default.rgw.control
-        application: rgw
-        replication: 1
-        percent_total_data: 0.1
-      - name: default.rgw.data.root
-        application: rgw
-        replication: 1
-        percent_total_data: 0.1
-      - name: default.rgw.gc
-        application: rgw
-        replication: 1
-        percent_total_data: 0.1
-      - name: default.rgw.log
-        application: rgw
-        replication: 1
-        percent_total_data: 0.1
-      - name: default.rgw.intent-log
-        application: rgw
-        replication: 1
-        percent_total_data: 0.1
-      - name: default.rgw.meta
-        application: rgw
-        replication: 1
-        percent_total_data: 0.1
-      - name: default.rgw.usage
-        application: rgw
-        replication: 1
-        percent_total_data: 0.1
-      - name: default.rgw.users.keys
-        application: rgw
-        replication: 1
-        percent_total_data: 0.1
-      - name: default.rgw.users.email
-        application: rgw
-        replication: 1
-        percent_total_data: 0.1
-      - name: default.rgw.users.swift
-        application: rgw
-        replication: 1
-        percent_total_data: 0.1
-      - name: default.rgw.users.uid
-        application: rgw
-        replication: 1
-        percent_total_data: 0.1
-      - name: default.rgw.buckets.extra
-        application: rgw
-        replication: 1
-        percent_total_data: 0.1
-      - name: default.rgw.buckets.index
-        application: rgw
-        replication: 1
-        percent_total_data: 3
-      - name: default.rgw.buckets.data
-        application: rgw
-        replication: 1
-        percent_total_data: 34.8
-  storage:
-    osd:
-      - data:
-          type: bluestore
-          location: ${CEPH_OSD_DATA_DEVICE}
-        block_db:
-          location: ${CEPH_OSD_DB_WAL_DEVICE}
-          size: "5GB"
-        block_wal:
-          location: ${CEPH_OSD_DB_WAL_DEVICE}
-          size: "2GB"
-
-pod:
-  replicas:
-    mds: 1
-    mgr: 1
-
-EOF
-
-tee start.sh<<EOF
-for CHART in ceph-mon ceph-osd ceph-client ceph-provisioners; do
-
-  helm upgrade --install ${CHART} ${HELM_CHART_ROOT_PATH}/${CHART} \
-    --namespace=ceph \
-    --values=/tmp/ceph.yaml \
-    ${OSH_EXTRA_HELM_ARGS} \
-    ${OSH_EXTRA_HELM_ARGS_CEPH:-$(./tools/deployment/common/get-values-overrides.sh ${CHART})}
-
-  #NOTE: Wait for deploy
-  ./tools/deployment/common/wait-for-pods.sh ceph
-
-  #NOTE: Validate deploy
-  MON_POD=$(kubectl get pods \
-    --namespace=ceph \
-    --selector="application=ceph" \
-    --selector="component=mon" \
-    --no-headers | awk '{ print $1; exit }')
-  kubectl exec -n ceph ${MON_POD} -- ceph -s
-done
-EOF
-
-chmod 777 start.sh
-./start.sh
-
-#Activate the openstack namespace to use ceph
-make -C ${HELM_CHART_ROOT_PATH} ceph-provisioners
-
-: ${OSH_EXTRA_HELM_ARGS:=""}
-tee /tmp/ceph-openstack-config.yaml <<EOF
-endpoints:
-  ceph_mon:
-    namespace: ceph
-network:
-  public: 172.17.0.1/16
-  cluster: 172.17.0.1/16
-deployment:
-  ceph: false
-  rbd_provisioner: false
-  cephfs_provisioner: false
-  csi_rbd_provisioner: false
-  client_secrets: true
-bootstrap:
-  enabled: false
-EOF
-
-helm upgrade --install ceph-openstack-config ${HELM_CHART_ROOT_PATH}/ceph-provisioners \
-  --namespace=openstack \
-  --values=/tmp/ceph-openstack-config.yaml \
-  ${OSH_EXTRA_HELM_ARGS} \
-  ${OSH_EXTRA_HELM_ARGS_CEPH_NS_ACTIVATE}
-  
-#Deploy mariadb
-
-make -C ${HELM_CHART_ROOT_PATH} mariadb
-
-: ${OSH_EXTRA_HELM_ARGS:=""}
-helm upgrade --install mariadb ${HELM_CHART_ROOT_PATH}/mariadb \
-    --namespace=openstack \
-    --set pod.replicas.server=1 \
-    ${OSH_EXTRA_HELM_ARGS} \
-    ${OSH_EXTRA_HELM_ARGS_MARIADB}
-
-#Deploy rabbitmq
-
-make -C ${HELM_CHART_ROOT_PATH} rabbitmq
-
-: ${OSH_EXTRA_HELM_ARGS:=""}
-helm upgrade --install rabbitmq ${HELM_CHART_ROOT_PATH}/rabbitmq \
-    --namespace=openstack \
-    ${OSH_EXTRA_HELM_ARGS} \
-    ${OSH_EXTRA_HELM_ARGS_RABBITMQ}
-    
-    
 #Deploy Memcached
-make -C ${HELM_CHART_ROOT_PATH} memcached
+./tools/deployment/developer/ceph/070-memcached.sh
 
-: ${OSH_EXTRA_HELM_ARGS:=""}
-helm upgrade --install memcached ${HELM_CHART_ROOT_PATH}/memcached \
-    --namespace=openstack \
-    ${OSH_EXTRA_HELM_ARGS:=} \
-    ${OSH_EXTRA_HELM_ARGS_MEMCACHED}
+#Deploy Keystone 
+./tools/deployment/developer/ceph/080-keystone.sh
 
-#Deploy keystone
-make keystone
+#Deploy Horizon
+./tools/deployment/developer/ceph/100-horizon.sh
 
-: ${OSH_EXTRA_HELM_ARGS:=""}
-helm upgrade --install keystone ./keystone \
-    --namespace=openstack \
-    ${OSH_EXTRA_HELM_ARGS} \
-    ${OSH_EXTRA_HELM_ARGS_KEYSTONE}
+#Deploy Rados Gateway for object store
+./tools/deployment/developer/ceph/110-ceph-radosgateway.sh
 
-#Deploy horizon
-make horizon
+#Deploy Glance 
+./tools/deployment/developer/ceph/120-glance.sh
 
-: ${OSH_EXTRA_HELM_ARGS:=""}
-helm upgrade --install horizon ./horizon \
-    --namespace=openstack \
-    --set network.node_port.enabled=true \
-    --set network.node_port.port=31000 \
-    ${OSH_EXTRA_HELM_ARGS} \
-    ${OSH_EXTRA_HELM_ARGS_HORIZON}
-    
-#Deploy rados for object storage
+#Deploy Cinder
+./tools/deployment/developer/ceph/130-cinder.sh
 
-make -C ${HELM_CHART_ROOT_PATH} ceph-rgw
-: ${OSH_EXTRA_HELM_ARGS:=""}
-tee /tmp/radosgw-openstack.yaml <<EOF
-endpoints:
-  identity:
-    namespace: openstack
-  object_store:
-    namespace: openstack
-  ceph_mon:
-    namespace: ceph
-network:
-  public: 172.17.0.1/16
-  cluster: 172.17.0.1/16
-deployment:
-  ceph: true
-bootstrap:
-  enabled: false
-conf:
-  rgw_ks:
-    enabled: true
-pod:
-  replicas:
-    rgw: 1
-EOF
+#Deploy OpenvSwitch
+./tools/deployment/developer/ceph/140-openvswitch.sh
 
-helm upgrade --install radosgw-openstack ${HELM_CHART_ROOT_PATH}/ceph-rgw \
-  --namespace=openstack \
-  --values=/tmp/radosgw-openstack.yaml \
-  ${OSH_EXTRA_HELM_ARGS} \
-  ${OSH_EXTRA_HELM_ARGS_CEPH_RGW}
-  
-#Deploy glance
+#Deploy Libvirt
+./tools/deployment/developer/ceph/150-libvirt.sh
 
-make glance
-: ${OSH_EXTRA_HELM_ARGS:=""}
-: ${GLANCE_BACKEND:="swift"}
-: ${OSH_EXTRA_HELM_ARGS_GLANCE:="$(./tools/deployment/common/get-values-overrides.sh glance)"}
-tee /tmp/glance.yaml <<EOF
-storage: ${GLANCE_BACKEND}
-EOF
-helm upgrade --install glance ./glance \
-  --namespace=openstack \
-  --values=/tmp/glance.yaml \
-  --set manifests.network_policy=true \
-  ${OSH_EXTRA_HELM_ARGS} \
-  ${OSH_EXTRA_HELM_ARGS_GLANCE}
-  
-#Deploy cinder
-: ${OSH_EXTRA_HELM_ARGS:=""}
-tee /tmp/cinder.yaml <<EOF
-conf:
-  ceph:
-    pools:
-      backup:
-        replication: 1
-        crush_rule: same_host
-        chunk_size: 8
-        app_name: cinder-backup
-      cinder.volumes:
-        replication: 1
-        crush_rule: same_host
-        chunk_size: 8
-        app_name: cinder-volume
-EOF
-
-helm upgrade --install cinder ./cinder \
-  --namespace=openstack \
-  --values=/tmp/cinder.yaml \
-    --set manifests.network_policy=true \
-  ${OSH_EXTRA_HELM_ARGS} \
-  ${OSH_EXTRA_HELM_ARGS_CINDER}
-
-#Deploy openvSwitch
-make -C ${HELM_CHART_ROOT_PATH} openvswitch
-
-: ${OSH_EXTRA_HELM_ARGS:=""}
-helm upgrade --install openvswitch ${HELM_CHART_ROOT_PATH}/openvswitch \
-  --namespace=openstack \
-  ${OSH_EXTRA_HELM_ARGS} \
-  ${OSH_EXTRA_HELM_ARGS_OPENVSWITCH}
-  
-#Deploy libvirt  
-make -C ${HELM_CHART_ROOT_PATH} libvirt
-: ${OSH_EXTRA_HELM_ARGS:=""}
-helm upgrade --install libvirt ${HELM_CHART_ROOT_PATH}/libvirt \
-  --namespace=openstack \
-  ${OSH_EXTRA_HELM_ARGS} \
-  ${OSH_EXTRA_HELM_ARGS_LIBVIRT}  
-  
-
-#Deploy compute Kit(Nova and Neutron)
+#Deploy Compute Kit(Nova and Neutron)
 ./tools/deployment/developer/ceph/160-compute-kit.sh
 
-#setup the gateway to the public network
+#Setup the gateway to the public network
 ./tools/deployment/developer/ceph/170-setup-gateway.sh
 
-my_br_ip=$(ifconfig eth0 | egrep -o 'inet [0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}'  | cut -d' ' -f2)
-
-echo use ssh -L 32020:$my_br_ip:31000 ubuntu@$my_br_ip for port forwarding
-
-
-
-
-
-
-
+echo "Successfully deployed😀"
+echo "login admin as username and password for password"
